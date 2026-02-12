@@ -9,6 +9,10 @@ jobs:
   windows:
     name: Windows (${{ matrix.platform }})
     runs-on: windows-2022
+    env:
+      # Use the VS2022 toolset. IMPORTANT: we must NOT set DefaultPlatformToolset=v143
+      # because PropertySheets/Platform.props would rewrite it to v143_xp.
+      PLATFORM_TOOLSET: v143
     strategy:
       fail-fast: false
       matrix:
@@ -24,14 +28,20 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Setup MSVC dev cmd
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.platform == 'x64' && 'x64' || 'x86' }}
-
       - name: Ensure ATL headers are available
         shell: pwsh
         run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:VCToolsInstallDir)) {
+            $expectedAtl = Join-Path $env:VCToolsInstallDir "atlmfc\include\atlbase.h"
+            if (Test-Path $expectedAtl) {
+              Write-Host "ATL header found for active toolset: $expectedAtl"
+              exit 0
+            }
+            Write-Host "ATL header not found for active toolset at: $expectedAtl"
+          } else {
+            Write-Host "VCToolsInstallDir is not set; falling back to scanning VS install."
+          }
+
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (-not (Test-Path $vswhere)) {
             throw "vswhere.exe not found at $vswhere"
@@ -75,6 +85,11 @@ jobs:
           }
           Write-Host "ATL header now found: $($atlHeaderAfter.FullName)"
 
+      - name: Setup MSVC dev cmd
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.platform == 'x64' && 'x64' || 'x86' }}
+
       - name: Ensure 7-Zip is available
         shell: pwsh
         run: |
@@ -116,8 +131,8 @@ jobs:
           msbuild "Source\\UpdateVersion\\UpdateVersion.vcxproj" /m /t:Build `
             /p:Configuration=${{ matrix.configuration }} `
             /p:Platform=${{ matrix.platform }} `
-            /p:PlatformToolset=v142 `
-            /p:DefaultPlatformToolset=v142 `
+            /p:PlatformToolset=${{ env.PLATFORM_TOOLSET }} `
+            /p:DefaultPlatformToolset= `
             /verbosity:minimal
 
       - name: Build solution
@@ -126,8 +141,8 @@ jobs:
           msbuild "Project64.sln" /m /t:Build `
             /p:Configuration=${{ matrix.configuration }} `
             /p:Platform=${{ matrix.platform }} `
-            /p:PlatformToolset=v142 `
-            /p:DefaultPlatformToolset=v142 `
+            /p:PlatformToolset=${{ env.PLATFORM_TOOLSET }} `
+            /p:DefaultPlatformToolset= `
             /verbosity:minimal
 
       - name: Package zip
