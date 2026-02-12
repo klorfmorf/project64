@@ -29,6 +29,52 @@ jobs:
         with:
           arch: ${{ matrix.platform == 'x64' && 'x64' || 'x86' }}
 
+      - name: Ensure ATL headers are available
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found at $vswhere"
+          }
+
+          $installPath = & $vswhere -latest -products * -property installationPath
+          if ([string]::IsNullOrWhiteSpace($installPath)) {
+            throw "Unable to locate Visual Studio installation via vswhere"
+          }
+
+          $atlHeader = Get-ChildItem -Path "$installPath\VC\Tools\MSVC" -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "atlmfc\\include\\atlbase\.h$" } |
+            Select-Object -First 1
+
+          if ($null -ne $atlHeader) {
+            Write-Host "ATL header found: $($atlHeader.FullName)"
+            exit 0
+          }
+
+          Write-Host "ATL header not found; installing Visual Studio ATL/MFC components..."
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          if (-not (Test-Path $installer)) {
+            throw "vs_installer.exe not found at $installer"
+          }
+
+          & $installer modify `
+            --installPath "$installPath" `
+            --add Microsoft.VisualStudio.Component.VC.ATL `
+            --add Microsoft.VisualStudio.Component.VC.ATLMFC `
+            --passive --norestart --wait
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "vs_installer modify failed with exit code $LASTEXITCODE"
+          }
+
+          $atlHeaderAfter = Get-ChildItem -Path "$installPath\VC\Tools\MSVC" -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "atlmfc\\include\\atlbase\.h$" } |
+            Select-Object -First 1
+          if ($null -eq $atlHeaderAfter) {
+            throw "ATL header still not found after installation"
+          }
+          Write-Host "ATL header now found: $($atlHeaderAfter.FullName)"
+
       - name: Ensure 7-Zip is available
         shell: pwsh
         run: |
